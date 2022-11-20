@@ -27,7 +27,9 @@ from tensorflow.python.keras.engine import base_layer
 from tensorflow.python.ops import array_ops
 from tensorflow.python.ops import control_flow_ops
 from tensorflow.python.ops import control_flow_util
+from tensorflow.python.ops import init_ops # Tianchi bzdjsm
 from tensorflow.python.ops import math_ops
+from tensorflow.python.ops import nn_ops # Tianchi bzdjsm
 from tensorflow.python.ops import rnn_cell_impl
 from tensorflow.python.ops import tensor_array_ops
 from tensorflow.python.ops import variable_scope as vs
@@ -37,6 +39,8 @@ from tensorflow.python.util.tf_export import tf_export
 
 # pylint: disable=protected-access
 _concat = rnn_cell_impl._concat
+_BIAS_VARIABLE_NAME = rnn_cell_impl._BIAS_VARIABLE_NAME         # Tianchi bzdjsm
+_WEIGHTS_VARIABLE_NAME = rnn_cell_impl._WEIGHTS_VARIABLE_NAME   # Tianchi bzdjsm
 # pylint: enable=protected-access
 
 
@@ -513,6 +517,169 @@ def bidirectional_dynamic_rnn(cell_fw,
 
   return (outputs, output_states)
 
+class _Linear(object):
+  def __init__(self,
+               args,
+               output_size,
+               build_bias,
+               bias_initializer=None,
+               kernel_initializer=None):
+    self._build_bias = build_bias
+
+    if args is None or (nest.is_sequence(args) and not args):
+      raise ValueError("`args` must be specified")
+    if not nest.is_sequence(args):
+      args = [args]
+      self._is_sequence = False
+    else:
+      self._is_sequence = True
+
+    # Calculate the total size of arguments on dimension 1.
+    total_arg_size = 0
+    shapes = [a.get_shape() for a in args]
+    for shape in shapes:
+      if shape.ndims != 2:
+        raise ValueError("linear is expecting 2D arguments: %s" % shapes)
+      if shape.dims[1].value is None:
+        raise ValueError("linear expects shape[1] to be provided for shape %s, "
+                         "but saw %s" % (shape, shape[1]))
+      else:
+        total_arg_size += shape.dims[1].value
+
+    dtype = [a.dtype for a in args][0]
+
+    scope = vs.get_variable_scope()
+    with vs.variable_scope(scope) as outer_scope:
+      self._weights = vs.get_variable(
+          _WEIGHTS_VARIABLE_NAME, [total_arg_size, output_size],
+          dtype=dtype,
+          initializer=kernel_initializer)
+      if build_bias:
+        with vs.variable_scope(outer_scope) as inner_scope:
+          inner_scope.set_partitioner(None)
+          if bias_initializer is None:
+            bias_initializer = init_ops.constant_initializer(0.0, dtype=dtype)
+          self._biases = vs.get_variable(
+              _BIAS_VARIABLE_NAME, [output_size],
+              dtype=dtype,
+              initializer=bias_initializer)
+
+  def __call__(self, args):
+    if not self._is_sequence:
+      args = [args]
+
+    if len(args) == 1:
+      res = math_ops.matmul(args[0], self._weights)
+    else:
+      # Explicitly creating a one for a minor performance improvement.
+      one = constant_op.constant(1, dtype=dtypes.int32)
+      res = math_ops.matmul(array_ops.concat(args, one), self._weights)
+    if self._build_bias:
+      res = nn_ops.bias_add(res, self._biases)
+    return res
+
+
+class SplittedVecAttGRUCell(rnn_cell_impl.RNNCell):
+  def __init__(self,
+         num_units,
+         activation=None,
+         reuse=None,
+         kernel_initializer=None,
+         bias_initializer=None):
+    super(SplittedVecAttGRUCell, self).__init__(_reuse=reuse)
+    self._num_units = num_units
+    self._activation = activation or math_ops.tanh
+    self._kernel_initializer = kernel_initializer
+    self._bias_initializer = bias_initializer
+    self._gate_linear = None
+    self._gate_linear_2 = None
+    self._gate_linear_a = None
+    self._gate_linear_2_a = None
+    self._candidate_linear = None
+    self._candidate_linear_a = None
+
+  @property
+  def state_size(self):
+    return self._num_units
+
+  @property
+  def output_size(self):
+    return self._num_units
+
+  def __call__(self, inputs, state):
+    return self.call(inputs, state)
+
+  def call(self, inputs, state, att_score=None):
+    '''Gated recurrent unit (GRU) with nunits cells.'''
+    _inputs = inputs[0]
+    att_score = inputs[1]
+
+    if self._gate_linear is None:
+      bias_ones = self._bias_initializer
+      if self._bias_initializer is None:
+        bias_ones = init_ops.constant_initializer(
+          1.0, dtype=_inputs.dtype)
+      with vs.variable_scope('gates'):  # Reset gate and update gate.
+        self._gate_linear = _Linear(
+          _inputs,
+          self._num_units,
+          True,
+          bias_initializer=bias_ones,
+          kernel_initializer=self._kernel_initializer)
+
+    if self._gate_linear_a is None:
+      with vs.variable_scope('gates_a'):  # Reset gate and update gate.
+        self._gate_linear_a = _Linear(
+          state,
+          self._num_units,
+          False,
+          kernel_initializer=self._kernel_initializer)
+
+    if self._gate_linear_2 is None:
+      bias_ones = self._bias_initializer
+      if self._bias_initializer is None:
+        bias_ones = init_ops.constant_initializer(
+          1.0, dtype=_inputs.dtype)
+      with vs.variable_scope('gates_2'):  # Reset gate and update gate.
+        self._gate_linear_2 = _Linear(
+          _inputs,
+          self._num_units,
+          True,
+          bias_initializer=bias_ones,
+          kernel_initializer=self._kernel_initializer)
+
+    if self._gate_linear_2_a is None:
+      with vs.variable_scope('gates_2_a'):  # Reset gate and update gate.
+        self._gate_linear_2_a = _Linear(
+          state,
+          self._num_units,
+          False,
+          kernel_initializer=self._kernel_initializer)
+
+    r = math_ops.sigmoid(math_ops.add(
+      self._gate_linear(_inputs),
+      self._gate_linear_a(state),
+    ))
+    u = math_ops.sigmoid(math_ops.add(
+      self._gate_linear_2(_inputs),
+      self._gate_linear_2_a(state),
+    ))
+
+    r_state = r * state
+
+    if self._candidate_linear is None:
+      with vs.variable_scope('candidate'):
+        self._candidate_linear = _Linear(
+          [_inputs, r_state],
+          self._num_units,
+          True,
+          bias_initializer=self._bias_initializer,
+          kernel_initializer=self._kernel_initializer)
+    c = self._activation(self._candidate_linear([_inputs, r_state]))
+
+    u = (1.0 - att_score) * u
+    new_h = u * state + (1 - u) * c
+    return new_h, new_h
 
 @deprecation.deprecated(
     None,
@@ -635,6 +802,9 @@ def dynamic_rnn(cell,
     TypeError: If `cell` is not an instance of RNNCell.
     ValueError: If inputs is None or an empty list.
   """
+  if (cell.__class__.__name__ =="VecAttGRUCell"):
+    cell = SplittedVecAttGRUCell(cell._num_units)
+    
   rnn_cell_impl.assert_like_rnncell("cell", cell)
 
   with vs.variable_scope(scope or "rnn") as varscope:

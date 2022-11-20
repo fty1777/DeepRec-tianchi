@@ -555,14 +555,34 @@ class GRUCell(LayerRNNCell):
     input_depth = inputs_shape[-1]
     self._gate_kernel = self.add_variable(
         "gates/%s" % _WEIGHTS_VARIABLE_NAME,
-        shape=[input_depth + self._num_units, 2 * self._num_units],
+        shape=[input_depth, self._num_units],
         initializer=self._kernel_initializer)
     self._gate_bias = self.add_variable(
         "gates/%s" % _BIAS_VARIABLE_NAME,
-        shape=[2 * self._num_units],
+        shape=[self._num_units],
         initializer=(self._bias_initializer
                      if self._bias_initializer is not None else
                      init_ops.constant_initializer(1.0, dtype=self.dtype)))
+    self._gate_kernel_a = self.add_variable(
+        "gates/%s_a" % _WEIGHTS_VARIABLE_NAME,
+        shape=[self._num_units, self._num_units],
+        initializer=self._kernel_initializer)
+
+    self._gate_kernel_2 = self.add_variable(
+        "gates/%s_2" % _WEIGHTS_VARIABLE_NAME,
+        shape=[input_depth, self._num_units],
+        initializer=self._kernel_initializer)
+    self._gate_bias_2 = self.add_variable(
+        "gates/%s_2" % _BIAS_VARIABLE_NAME,
+        shape=[self._num_units],
+        initializer=(self._bias_initializer
+                     if self._bias_initializer is not None else
+                     init_ops.constant_initializer(1.0, dtype=self.dtype)))
+    self._gate_kernel_2_a = self.add_variable(
+        "gates/%s_2_a" % _WEIGHTS_VARIABLE_NAME,
+        shape=[self._num_units, self._num_units],
+        initializer=self._kernel_initializer)
+
     self._candidate_kernel = self.add_variable(
         "candidate/%s" % _WEIGHTS_VARIABLE_NAME,
         shape=[input_depth + self._num_units, self._num_units],
@@ -580,12 +600,25 @@ class GRUCell(LayerRNNCell):
     """Gated recurrent unit (GRU) with nunits cells."""
     _check_rnn_cell_input_dtypes([inputs, state])
 
-    gate_inputs = math_ops.matmul(
-        array_ops.concat([inputs, state], 1), self._gate_kernel)
+    gate_inputs = math_ops.matmul(inputs, self._gate_kernel)
     gate_inputs = nn_ops.bias_add(gate_inputs, self._gate_bias)
-
+    gate_inputs = math_ops.add(gate_inputs,
+      math_ops.matmul(
+        state, self._gate_kernel_a
+      )
+    )
     value = math_ops.sigmoid(gate_inputs)
-    r, u = array_ops.split(value=value, num_or_size_splits=2, axis=1)
+    r = value
+
+    gate_inputs = math_ops.matmul(inputs, self._gate_kernel_2)
+    gate_inputs = nn_ops.bias_add(gate_inputs, self._gate_bias_2)
+    gate_inputs = math_ops.add(gate_inputs,
+      math_ops.matmul(
+        state, self._gate_kernel_2_a
+      )
+    )
+    value = math_ops.sigmoid(gate_inputs)
+    u = value
 
     r_state = r * state
 
