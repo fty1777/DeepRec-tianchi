@@ -554,6 +554,22 @@ REGISTER_OP("ConcatV2")
     .Attr("Tidx: {int32, int64} = DT_INT32")
     .SetShapeFn(shape_inference::ConcatV2Shape);
 
+REGISTER_OP("ConcatReduceSum")
+    .Input("values: N * T")
+    .Output("output: T")
+    .Attr("N: int = 29")
+    .Attr("T: type")
+    .SetShapeFn([](InferenceContext* c) {
+      ShapeHandle indices = c->input(0);
+      ShapeHandle out;
+      TF_RETURN_IF_ERROR(c->Subshape(indices, 0, 1, &out));
+      DimensionHandle depth;
+      TF_RETURN_IF_ERROR(c->MakeDimForScalarInput(1, &depth));
+      TF_RETURN_IF_ERROR(c->Concatenate(out, c->Vector(depth), &out));
+      c->set_output(0, out);
+      return Status::OK();
+    });
+
 // TODO(vivek.v.rane@intel.com): Prefix the op names with underscore if the ops
 // are not to be made user-accessible.
 #ifdef INTEL_MKL

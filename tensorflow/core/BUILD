@@ -3209,6 +3209,7 @@ GRAPH_HDRS = [
     "graph/template_select_pruning_then_const.h",
     "graph/template_sparse_inner_flatten.h",
     "graph/template_one_hot_sum.h",
+    "graph/template_concat_reduce_sum.h",
     "graph/tensor_id.h",
     "graph/testlib.h",
     "graph/types.h",

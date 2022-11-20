@@ -206,11 +206,12 @@ bool OptimizerFusionImpl::CheckInputs(const Node* node,
       }
     }
     if (input_port >= (int)temp_node->inputs.size() ) {
-      LOG(FATAL) << "Please verify Template's node ("
-                 << node->type_string() << ") definition"
-                 << ", node inputs:" << node->in_edges().size()
-                 << ", template node inputs:" << temp_node->inputs.size()
-                 << " mismatch.";
+      return false;
+      // LOG(FATAL) << "Please verify Template's node ("
+      //            << node->type_string() << ") definition"
+      //            << ", node inputs:" << node->in_edges().size()
+      //            << ", template node inputs:" << temp_node->inputs.size()
+      //            << " mismatch.";
     }
     const Node* input_node = iedge->src();
     // control dependency node

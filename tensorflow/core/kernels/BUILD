@@ -3981,6 +3981,7 @@ cc_library(
         ":segment_reduction_ali_ops",
         ":sequence_ops",
         ":one_hot_sum_op",
+        ":concat_reduce_sum_op",
     ],
 )
 
@@ -4125,6 +4126,17 @@ tf_kernel_library(
 tf_kernel_library(
     name = "one_hot_sum_op",
     prefix = "one_hot_sum_op",
+    deps = [
+        "//tensorflow/core:core_cpu",
+        "//tensorflow/core:framework",
+        "//tensorflow/core:lib",
+        "//tensorflow/core:lib_internal",
+    ]
+)
+
+tf_kernel_library(
+    name = "concat_reduce_sum_op",
+    prefix = "concat_reduce_sum_op",
     deps = [
         "//tensorflow/core:core_cpu",
         "//tensorflow/core:framework",

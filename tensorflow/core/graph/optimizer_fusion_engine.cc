@@ -27,6 +27,7 @@ limitations under the License.
 #include "tensorflow/core/graph/template_select_pruning_then_const.h"
 #include "tensorflow/core/graph/template_sparse_inner_flatten.h"
 #include "tensorflow/core/graph/template_one_hot_sum.h"
+#include "tensorflow/core/graph/template_concat_reduce_sum.h"
 namespace tensorflow {
 
 bool OptimizeFusion(Graph* g) {
@@ -42,6 +43,7 @@ bool OptimizeFusion(Graph* g) {
   templates.emplace_back(new TemplateSelectElseScalarInGrad());
   templates.emplace_back(new TemplateSelectThenScalarInGrad());
   templates.emplace_back(new TemplateOneHotSum());
+  templates.emplace_back(new TemplateConcatReduceSum());
 
   for (auto& t : templates) {
     std::unique_ptr<OptimizerFusionImpl> opt(
