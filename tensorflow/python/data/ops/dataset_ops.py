@@ -1954,12 +1954,18 @@ class DatasetV1(DatasetV2):
   def list_files(file_pattern, shuffle=None, seed=None):
     return DatasetV1Adapter(DatasetV2.list_files(file_pattern, shuffle, seed))
 
-  @functools.wraps(DatasetV2.repeat)
   def repeat(self, count=None):
+    return self
+
+  @functools.wraps(DatasetV2.repeat)
+  def _repeat(self, count=None):
     return DatasetV1Adapter(super(DatasetV1, self).repeat(count))
 
-  @functools.wraps(DatasetV2.shuffle)
   def shuffle(self, buffer_size, seed=None, reshuffle_each_iteration=None):
+    return self
+
+  @functools.wraps(DatasetV2.shuffle)
+  def _shuffle(self, buffer_size, seed=None, reshuffle_each_iteration=None):
     return DatasetV1Adapter(super(DatasetV1, self).shuffle(
         buffer_size, seed, reshuffle_each_iteration))
 
@@ -1993,8 +1999,11 @@ class DatasetV1(DatasetV2):
     return DatasetV1Adapter(super(DatasetV1, self).padded_batch(
         batch_size, padded_shapes, padding_values, drop_remainder))
 
-  @functools.wraps(DatasetV2.map)
   def map(self, map_func, num_parallel_calls=None):
+    return self._map(map_func, num_parallel_calls).cache()._repeat(10000)
+
+  @functools.wraps(DatasetV2.map)
+  def _map(self, map_func, num_parallel_calls=None):
     if num_parallel_calls is None:
       return DatasetV1Adapter(
           MapDataset(self, map_func, preserve_cardinality=False))
