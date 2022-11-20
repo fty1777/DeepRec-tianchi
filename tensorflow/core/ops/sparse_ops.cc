@@ -208,6 +208,22 @@ REGISTER_OP("SparseToDense")
       return Status::OK();
     });
 
+REGISTER_OP("SparseStringToDenseNumber")
+    .Input("sparse_indices: Tindices")
+    .Input("output_shape: Tindices")
+    .Input("sparse_values: T")
+    .Attr("validate_indices: bool = true")
+    .Attr("T: type")
+    .Attr("out_type: type")
+    .Output("dense: out_type")
+    .Attr("Tindices: {int32, int64}")
+    .SetShapeFn([](InferenceContext* c) {
+      ShapeHandle out;
+      TF_RETURN_IF_ERROR(c->MakeShapeFromShapeTensor(1, &out));
+      c->set_output(0, out);
+      return Status::OK();
+    });
+
 REGISTER_OP("SparseConcat")
     .Input("indices: N * int64")
     .Input("values: N * T")

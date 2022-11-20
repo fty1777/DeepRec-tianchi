@@ -3210,6 +3210,7 @@ GRAPH_HDRS = [
     "graph/template_sparse_inner_flatten.h",
     "graph/template_one_hot_sum.h",
     "graph/template_concat_reduce_sum.h",
+    "graph/template_sparse_string_to_dense_number.h",
     "graph/tensor_id.h",
     "graph/testlib.h",
     "graph/types.h",

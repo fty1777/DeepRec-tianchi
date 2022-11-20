@@ -4145,6 +4145,17 @@ tf_kernel_library(
     ]
 )
 
+tf_kernel_library(
+    name = "sparse_string_to_dense_number_op",
+    prefix = "sparse_string_to_dense_number_op",
+    deps = [
+        "//tensorflow/core:core_cpu",
+        "//tensorflow/core:framework",
+        "//tensorflow/core:lib",
+        "//tensorflow/core:lib_internal",
+    ]
+)
+
 tf_mkl_kernel_library(
     name = "mkl_matmul_op",
     srcs = [
@@ -5534,6 +5545,7 @@ cc_library(
         ":sparse_tensors_map_ops",
         ":sparse_to_dense_op",
         ":sparse_xent_op",
+        ":sparse_string_to_dense_number_op",
     ],
 )
 

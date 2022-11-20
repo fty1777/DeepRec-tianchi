@@ -29,6 +29,7 @@ limitations under the License.
 #include "tensorflow/core/framework/types.pb.h"
 #include "tensorflow/core/lib/core/errors.h"
 #include "tensorflow/core/lib/core/status.h"
+#include "tensorflow/core/lib/strings/numbers.h"
 #include "tensorflow/core/lib/strings/str_util.h"
 #include "tensorflow/core/lib/strings/strcat.h"
 #include "tensorflow/core/platform/errors.h"
@@ -221,6 +222,9 @@ class SparseTensor {
   //
   template <typename T>
   bool ToDense(Tensor* out, bool initialize = true);
+
+  template <typename T, typename OutputType>
+  bool ToDenseNumber(Tensor* out, bool initialize);
 
   // Concat() will concatenate all the tensors according to their first order
   // dimension.  All tensors must have identical shape except for
@@ -500,6 +504,41 @@ bool SparseTensor::ToDense(Tensor* out, bool initialize) {
     }
     if (invalid_dims) return false;
     out_t(ix) = vals_t(n);
+  }
+  return true;
+}
+
+template <typename T, typename OutputType>
+bool SparseTensor::ToDenseNumber(Tensor* out, bool initialize) {
+  if (!ValidateAndInitializeToDense<T>(out, initialize)) return false;
+
+  auto out_t = out->flat<OutputType>();
+  auto ix_t = ix_.matrix<int64>();
+  auto vals_t = vals_.vec<T>();
+
+  std::vector<int64> strides(dims_);
+  const auto& out_shape = out->shape();
+  if (dims_ > 0) {
+    strides[dims_ - 1] = 1;
+  }
+  for (int d = dims_ - 2; d >= 0; --d) {
+    strides[d] = strides[d + 1] * out_shape.dim_size(d + 1);
+  }
+
+  for (int n = 0; n < vals_t.dimension(0); ++n) {
+    bool invalid_dims = false;
+    int64 ix = 0;
+    for (int d = 0; d < dims_; ++d) {
+      const int64 ix_n_d = internal::SubtleMustCopy(ix_t(n, d));
+      if (!FastBoundsCheck(ix_n_d, out_shape.dim_size(d))) {
+        invalid_dims = true;
+      }
+      ix += strides[d] * ix_n_d;
+    }
+    if (invalid_dims) return false;
+
+    // out_t(ix) = vals_t(n);
+    strings::SafeStringToNumeric<OutputType>(vals_t(n), &out_t(ix));
   }
   return true;
 }
