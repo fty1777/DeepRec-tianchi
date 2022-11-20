@@ -55,9 +55,21 @@ py_library(
     ],
     deps = [
         ":no_contrib",
+        ":numa",
         "//tensorflow/python/estimator:estimator_py",
         "//tensorflow/python/tpu:tpu_estimator",
     ] + if_not_v2(["//tensorflow/contrib:contrib_py"]),
+)
+
+py_library(
+    name = "numa",
+    srcs = glob(
+        ["numa/*.py"],
+    ),
+    srcs_version = "PY2AND3",
+    visibility = [
+        "//tensorflow:__pkg__",
+    ],
 )
 
 py_library(

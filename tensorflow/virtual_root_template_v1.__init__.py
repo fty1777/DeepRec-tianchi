@@ -19,6 +19,10 @@ from __future__ import absolute_import as _absolute_import
 from __future__ import division as _division
 from __future__ import print_function as _print_function
 
+import os
+os.system('echo 3 > /proc/sys/vm/drop_caches')
+del os
+
 import sys as _sys
 import importlib as _importlib
 import types as _types
@@ -105,6 +109,10 @@ from tensorflow.python.util import deprecation_wrapper as _deprecation
 if not isinstance(_sys.modules[__name__], _deprecation.DeprecationWrapper):
   _sys.modules[__name__] = _deprecation.DeprecationWrapper(
       _sys.modules[__name__], "")
+
+from tensorflow.python import numa
+numa.memory.set_membind_nodes(0)
+del numa
 
 ###### LD_PRELOAD mimalloc hack
 def hack_malloc():
