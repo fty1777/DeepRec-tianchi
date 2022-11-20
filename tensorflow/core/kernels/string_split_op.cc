@@ -29,6 +29,10 @@ limitations under the License.
 #include "tensorflow/core/platform/env.h"
 #include "tensorflow/core/platform/types.h"
 
+#if defined(__AVX512F__)
+#include <immintrin.h>
+#endif
+
 namespace tensorflow {
 using thread::ThreadPool;
 namespace {
@@ -44,7 +48,7 @@ class WorkerInfo{
   explicit WorkerInfo(int num_threads, int64 batch_size)
       :output_size(0), counter_for_thread(0),
       thread_index(0), max_num_entries(0) {
-      const int kReserveSize = 4;
+      const int kReserveSize = 64;
       int numReserve = batch_size * kReserveSize / num_threads ?
                        batch_size * kReserveSize / num_threads : 1;
       tokens_buffer.reserve(numReserve);
@@ -181,6 +185,137 @@ std::vector<StringPiece> SplitV2(const string& str, StringPiece sep,
   }
   result.push_back(text);
   return result;
+}
+
+
+int64 SplitV2Inplace(const string& str, StringPiece sep,
+                     int maxsplit, std::vector<StringPiece>& result) {
+  StringPiece text(str);
+  if (maxsplit == 0) {
+    result.emplace_back(text);
+    return 1;
+  }
+
+  if (sep.empty()) {
+    StringPiece token;
+    // Remove leading whitespaces.
+    str_util::RemoveLeadingWhitespace(&text);
+    int split = 0;
+    while (str_util::ConsumeNonWhitespace(&text, &token)) {
+      result.push_back(token);
+      str_util::RemoveLeadingWhitespace(&text);
+      ++split;
+      if (maxsplit > 0 && split == maxsplit) {
+        result.push_back(text);
+        return split + 1;
+      }
+    }
+    return split;
+  }
+  auto p = std::search(text.begin(), text.end(), sep.begin(), sep.end());
+  int split = 0;
+  while (p != text.end()) {
+    StringPiece token = text.substr(0, p - text.begin());
+    result.push_back(token);
+    text.remove_prefix(token.size());
+    text.remove_prefix(sep.size());
+    ++split;
+    if (maxsplit > 0 && split == maxsplit) {
+      result.push_back(StringPiece(text));
+      return split + 1;
+    }
+    p = std::search(text.begin(), text.end(), sep.begin(), sep.end());
+  }
+  result.push_back(text);
+  return split + 1;
+}
+
+#if defined(__AVX512F__)
+int64 SplitCharV2InplaceAvx512(const string& str, char sep, std::vector<StringPiece>& result) {
+  const int bytes_in_vec = 64;
+  int64 n_vecs = str.size() / bytes_in_vec;
+  int64 remaining = str.size() - bytes_in_vec * n_vecs;
+
+  StringPiece text(str);
+  __m512i sep64 = _mm512_set1_epi8(sep);
+
+  int64 l = 0;
+  int64 splits = 0;
+  for (int i = 0; i < n_vecs; i++) {
+    int r_base = i * bytes_in_vec;
+    __m512i piece64 = _mm512_loadu_si512(&text[r_base]);
+    __mmask64 eq = _mm512_cmpeq_epi8_mask(piece64, sep64);
+    int64 tzcnt = _tzcnt_u64(eq);
+    while (tzcnt != 64) {
+      int64 r = r_base + tzcnt;
+      ++splits;
+      result.push_back(text.substr(l, r - l));
+      l = r + 1;
+
+      eq ^= 1ULL << tzcnt;
+      tzcnt = _tzcnt_u64(eq);
+    }
+  }
+
+  int64 r_base = n_vecs * bytes_in_vec;
+  __mmask64 mask = (1ULL << remaining) - 1;
+  __m512i piece64 = _mm512_maskz_loadu_epi8 (mask, &text[r_base]);
+  __mmask64 eq = _mm512_cmpeq_epi8_mask(piece64, sep64);
+  int64 tzcnt = _tzcnt_u64(eq);
+  while (tzcnt != 64) {
+    int64 r = r_base + tzcnt;
+    ++splits;
+    result.push_back(text.substr(l, r - l));
+    l = r + 1;
+
+    eq ^= 1ULL << tzcnt;
+    tzcnt = _tzcnt_u64(eq);
+  }
+
+  result.push_back(text.substr(l, text.length() - l));
+  return splits + 1;
+}
+#endif
+
+int64 SplitCharV2InplaceAvx2(const string& str, char sep, std::vector<StringPiece>& result) {
+  const int bytes_in_vec = 32;
+  int64 n_vecs = str.size() / bytes_in_vec;
+  int64 remaining = str.size() - bytes_in_vec * n_vecs;
+
+  StringPiece text(str);
+  __m256i sep32 = _mm256_set1_epi8(sep);
+
+  int32 l = 0;
+  int32 prev_size = result.size();
+  int r_base = 0;
+  for (int i = 0; i < n_vecs; i++) {
+      __m256i piece32 = _mm256_loadu_si256((__m256i *) &text[r_base]);
+      __mmask32 eq = _mm256_cmpeq_epi8_mask(piece32, sep32);
+      int32 tzcnt = _tzcnt_u32(eq);
+      while (tzcnt != 32) {
+          result.emplace_back(&text[l], r_base + tzcnt - l);
+          l = r_base + tzcnt + 1;
+
+          eq ^= 1 << tzcnt;
+          tzcnt = _tzcnt_u32(eq);
+      }
+      r_base += bytes_in_vec;
+  }
+
+  __mmask32 mask = (1ULL << remaining) - 1;
+  __m256i piece32 = _mm256_maskz_loadu_epi8(mask, &text[r_base]);
+  __mmask32 eq = _mm256_cmpeq_epi8_mask(piece32, sep32);
+  int32 tzcnt = _tzcnt_u32(eq);
+  while (tzcnt != 32) {
+      result.emplace_back(&text[l], r_base + tzcnt - l);
+      l = r_base + tzcnt + 1;
+
+      eq ^= 1 << tzcnt;
+      tzcnt = _tzcnt_u32(eq);
+  }
+
+  result.emplace_back(&text[l], text.size() - l);
+  return result.size() - prev_size;
 }
 
 }  // namespace
@@ -446,6 +581,7 @@ class StringSplitV2Op : public OpKernel {
     num_indices[0] = 0;
 
     std::vector<WorkerInfo> w_array;
+    w_array.reserve(num_threads);
     for (int i = 0; i < num_threads; i++) {
       WorkerInfo w(num_threads, batch_size);
       w_array.emplace_back(w);
@@ -460,9 +596,8 @@ class StringSplitV2Op : public OpKernel {
        &num_indices](int64 start, int64 end, int64 worker_id) {
         int64 position_in_worker = 0;
         for (int64 i = start; i < end; ++i) {
-          std::vector<StringPiece> parts =
-              SplitV2(input_vec(i), sep, maxsplit_);
-          int64 n_entries = parts.size();
+          int64 n_entries = SplitV2Inplace(input_vec(i), sep, maxsplit_, 
+                                           w_array[worker_id].tokens_buffer);
           id_to_worker[i].emplace_back(worker_id);
           id_to_worker[i].emplace_back(w_array[worker_id].counter_for_thread);
           id_to_worker[i].emplace_back(w_array[worker_id].output_size);
@@ -473,10 +608,6 @@ class StringSplitV2Op : public OpKernel {
           w_array[worker_id].output_size += n_entries;
           w_array[worker_id].max_num_entries =
               std::max(w_array[worker_id].max_num_entries, n_entries);
-          w_array[worker_id].tokens_buffer.insert(
-               w_array[worker_id].tokens_buffer.end(),
-               std::make_move_iterator(parts.begin()),
-               std::make_move_iterator(parts.end()));
           w_array[worker_id].counter_for_thread++;
        }
       });
@@ -563,19 +694,64 @@ class StringSplitV2Op : public OpKernel {
                           16, Eigen::MakePointer> input_vec,
                           const int64 batch_size, StringPiece sep) {
     std::vector<StringPiece> tokens;
-    static constexpr int kReserveSize = 4;
-    tokens.reserve(batch_size * kReserveSize);
+    static constexpr int kReserveSize = 64;
+    const int64 reserved_size = batch_size * kReserveSize;
+    tokens.reserve(reserved_size);
     int64 output_size = 0;
     int64 max_num_entries = 0;
 
     std::vector<int64> num_indices(batch_size);
     for (int64 i = 0; i < batch_size; ++i) {
-      std::vector<StringPiece> parts = SplitV2(input_vec(i), sep, maxsplit_);
-      int64 n_entries = parts.size();
+      int64 n_entries = SplitV2Inplace(input_vec(i), sep, maxsplit_, tokens);
       num_indices[i] = n_entries;
       output_size += n_entries;
       max_num_entries = std::max(max_num_entries, n_entries);
-      tokens.insert(tokens.end(), parts.begin(), parts.end());
+    }
+
+    Tensor* sp_indices_t;
+    OP_REQUIRES_OK(ctx, ctx->allocate_output(0, TensorShape({output_size, 2}),
+                                             &sp_indices_t));
+    Tensor* sp_tokens_t;
+    OP_REQUIRES_OK(
+        ctx, ctx->allocate_output(1, TensorShape({output_size}), &sp_tokens_t));
+    Tensor* sp_shape_t;
+    OP_REQUIRES_OK(ctx, ctx->allocate_output(2, TensorShape({2}), &sp_shape_t));
+
+    auto sp_indices = sp_indices_t->matrix<int64>();
+    auto sp_tokens = sp_tokens_t->vec<string>();
+    auto sp_shape = sp_shape_t->vec<int64>();
+    sp_shape(0) = batch_size;
+    sp_shape(1) = max_num_entries;
+    size_t c = 0;
+    for (size_t i = 0; i < batch_size; ++i) {
+      for (size_t j = 0; j < num_indices[i]; ++j) {
+        sp_indices(c, 0) = i;
+        sp_indices(c, 1) = j;
+        sp_tokens(c).assign(tokens[c].data(), tokens[c].size());
+        ++c;
+      }
+    }
+  }
+
+  void SequentialSplitCharV2(OpKernelContext* ctx,
+                          const Eigen::TensorMap<
+                          Eigen::Tensor<const string, 1, 1, long>,
+                          16, Eigen::MakePointer> input_vec,
+                          const int64 batch_size, char sep) {
+    std::vector<StringPiece> tokens;
+    static constexpr int kReserveSize = 64;
+    const int64 reserved_size = batch_size * kReserveSize;
+    tokens.reserve(reserved_size);
+    int64 output_size = 0;
+    int64 max_num_entries = 0;
+
+    std::vector<int64> num_indices(batch_size);
+    // LOG(INFO) << "Batch size: " << batch_size;
+    for (int64 i = 0; i < batch_size; i++) {
+      int64 n_entries = SplitCharV2InplaceAvx2(input_vec(i), sep, tokens);
+      num_indices[i] = n_entries;
+      output_size += n_entries;
+      max_num_entries = std::max(max_num_entries, n_entries);
     }
 
     Tensor* sp_indices_t;
@@ -621,24 +797,30 @@ class StringSplitV2Op : public OpKernel {
     const auto sep_vec = sep_tensor->flat<string>();
     StringPiece sep(sep_vec(0));
 
-    uint64 start = 0;
-    uint64 end = 0;
-
-    if (element_cost_ == 0 && batch_size) {
-      size_t sample_id = rand() % batch_size;
-      std::vector<StringPiece> temp_for_warm_up =
-          SplitV2(input_vec(sample_id), sep, maxsplit_);
-      start = Env::Default()->NowNanos();
-      temp_for_warm_up = SplitV2(input_vec(sample_id), sep, maxsplit_);
-      end = Env::Default()->NowNanos();
-      element_cost_ = end -start;
-    }
-    uint64 element_cost = element_cost_;
-    if (element_cost * batch_size >= parallel_limit_) {
-      ParallelSplitV2(ctx, input_vec, batch_size, sep);
+    if (sep.size() == 1 && maxsplit_ <= 0) {
+      SequentialSplitCharV2(ctx, input_vec, batch_size, sep[0]);
     } else {
       SequentialSplitV2(ctx, input_vec, batch_size, sep);
     }
+
+  //   uint64 start = 0;
+  //   uint64 end = 0;
+
+  //   if (element_cost_ == 0 && batch_size) {
+  //     size_t sample_id = rand() % batch_size;
+  //     std::vector<StringPiece> temp_for_warm_up =
+  //         SplitV2(input_vec(sample_id), sep, maxsplit_);
+  //     start = Env::Default()->NowNanos();
+  //     temp_for_warm_up = SplitV2(input_vec(sample_id), sep, maxsplit_);
+  //     end = Env::Default()->NowNanos();
+  //     element_cost_ = end -start;
+  //   }
+  //   uint64 element_cost = element_cost_;
+  //   if (element_cost * batch_size >= parallel_limit_) {
+  //     ParallelSplitV2(ctx, input_vec, batch_size, sep);
+  //   } else {
+  //     SequentialSplitV2(ctx, input_vec, batch_size, sep);
+  //   }
   }
 
  private:
