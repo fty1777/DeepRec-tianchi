@@ -701,14 +701,14 @@ class MklLayoutRewritePass : public GraphOptimizationPass {
         {csinfo_.requantize, mkl_op_registry::GetMklOpName(csinfo_.requantize),
          CopyAttrsAll, AlwaysRewrite, kRewriteForLayoutPropagation});
     rinfo_.push_back({csinfo_.tanh, mkl_op_registry::GetMklOpName(csinfo_.tanh),
-                      CopyAttrsAll, AlwaysRewrite,
+                      CopyAttrsAll, TanhRewrite,
                       kRewriteForLayoutPropagation});
     rinfo_.push_back(
         {csinfo_.tanh_grad, mkl_op_registry::GetMklOpName(csinfo_.tanh_grad),
-         CopyAttrsAll, AlwaysRewrite, kRewriteForLayoutPropagation});
+         CopyAttrsAll, TanhRewrite, kRewriteForLayoutPropagation});
     rinfo_.push_back(
         {csinfo_.reshape, mkl_op_registry::GetMklOpName(csinfo_.reshape),
-         CopyAttrsAll, AlwaysRewrite, kRewriteForLayoutPropagation});
+         CopyAttrsAll, NeverRewrite, kRewriteForLayoutPropagation});
     rinfo_.push_back({csinfo_.slice,
                       mkl_op_registry::GetMklOpName(csinfo_.slice),
                       CopyAttrsAll, RewriteIfAtleastOneMklInput,
@@ -1459,6 +1459,8 @@ class MklLayoutRewritePass : public GraphOptimizationPass {
   // @return - true (since we want to always rewrite)
   static bool AlwaysRewrite(const Node* n) { return true; }
 
+  static bool NeverRewrite(const Node* n) { return false; }
+
   // Rewrite rule which considers "context" of the current node to decide if we
   // should rewrite. By "context" we currently mean all the inputs of current
   // node. The idea is if none of the inputs of current node are not OneDNN nodes,
@@ -1491,7 +1493,27 @@ class MklLayoutRewritePass : public GraphOptimizationPass {
     return false;
   }
 
+  static bool GruNoRewrite(const Node* n) {
+    const char*name = n->def().name().c_str();
+    if (strstr(name, "while") && !strstr(name, "gradients")) {
+      LOG(INFO) << n->def().name() << " won't be mklized";
+      return true;
+    }
+    return false;
+  }
+
+  static bool TanhRewrite(const Node *n) {
+    return false;
+    if (GruNoRewrite(n)) {
+      return false;
+    }
+    return true;
+  }
+
   static bool MatMulRewrite(const Node* n) {
+    if (GruNoRewrite(n)) {
+      return false;
+    }
     DataType T;
     GetNodeAttr(n->def(), "T", &T);
     if ((T == DT_FLOAT) || (T == DT_BFLOAT16)) {
@@ -1527,6 +1549,9 @@ class MklLayoutRewritePass : public GraphOptimizationPass {
   // @return - true (no transpose attribute for input 1);
   //           false otherwise.
   static bool FusedMatMulRewrite(const Node* n) {
+    if (GruNoRewrite(n)) {
+      return false;
+    }
     bool trans_a;
 
     // Do not rewrite with transpose attribute because reorder has performance

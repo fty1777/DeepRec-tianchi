@@ -417,7 +417,11 @@ bool IsDeviceCompatible(const RemapperContext& ctx, Pattern& matched) {
 bool IsSupportedActivation(const NodeDef& node) {
   if (!DisableMKL()) {
     return IsRelu(node) || IsRelu6(node) || IsElu(node) || IsGelu(node) ||
-           IsLeakyRelu(node) || IsTanh(node);
+          //  // Tianchi bzdjsm
+          //  IsSigmoid(node) || 
+           IsLeakyRelu(node) 
+          //  || IsTanh(node)
+           ;
   }
   return IsRelu(node) || IsRelu6(node) || IsElu(node) || IsLeakyRelu(node);
 }
@@ -463,6 +467,7 @@ bool FindContractionWithBias(const RemapperContext& ctx, int node_index,
   const auto* node_view = ctx.graph_view.GetNode(node_index);
   // Root of the pattern must be a BiasAdd.
   // TODO(lyandy): Forward controls for patterns with control dependencies.
+  return false;
   if (HasControlFaninOrFanout(*node_view)) return false;
 
   const auto* node_def = node_view->node();
@@ -497,6 +502,14 @@ bool FindContractionWithBias(const RemapperContext& ctx, int node_index,
   return true;
 }
 
+static bool GruNoRewrite(const string& name) {
+  if ((name.find("while") != string::npos) &&
+      (name.find("gradients") == string::npos)) {
+    return true;
+  }
+  return false;
+}
+
 bool FindContractionWithBiasAndActivation(
     const RemapperContext& ctx, int node_index,
     ContractionWithBiasAddAndActivation* matched) {
@@ -526,6 +539,9 @@ bool FindContractionWithBiasAndActivation(
   const auto* contraction_node_view =
       bias_add_node_view->GetRegularFanin(0).node_view();
   const auto* contraction_node_def = contraction_node_view->node();
+
+  if (GruNoRewrite(contraction_node_def->name())) return false;
+
 
   // Currently, only matmul + bias + gelu is enabled
   if (!IsMatMul(*contraction_node_def) && IsGelu(*node_def)) return false;
