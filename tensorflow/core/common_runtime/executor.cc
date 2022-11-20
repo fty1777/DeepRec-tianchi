@@ -74,6 +74,8 @@ limitations under the License.
 #include "tensorflow/core/util/env_var.h"
 #include "tensorflow/core/util/tensor_slice_reader_cache.h"
 
+#define MAX_SIZE 16
+
 namespace tensorflow {
 
 namespace {
@@ -889,6 +891,17 @@ void ExecutorState<PropagatorStateType>::BatchProcess(std::vector<TaggedNode> no
 
   TaggedNode tagged_node;
   while (!inline_ready.empty()) {
+    int num = inline_ready.size() - inline_ready.front_index();
+    while(num > MAX_SIZE && inline_ready.size() > MAX_SIZE){
+      std::vector<TaggedNode> inodes;
+      for(size_t i = 0; i < MAX_SIZE; ++i){
+        inodes.push_back(inline_ready.front());
+	      inline_ready.pop_front();
+      }
+      RunTask(std::bind(&ExecutorState::BatchProcess, this,
+			      inodes, MAX_SIZE, scheduled_nsec));
+      num = inline_ready.size() - inline_ready.front_index();
+    }
     tagged_node = inline_ready.front();
     inline_ready.pop_front();
     const NodeItem& item = tagged_node.get_node_item();
