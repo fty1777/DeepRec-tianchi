@@ -2984,6 +2984,38 @@ REGISTER_OP("OneHot")
       return Status::OK();
     });
 
+REGISTER_OP("OneHotSum")
+    .Input("indices: TI")
+    .Input("depth: int32")
+    .Input("on_value: T")
+    .Input("off_value: T")
+    .Attr("axis: int = -1")
+    .Output("output: T")
+    .Attr("T: type")
+    .Attr("TI: {uint8, int32, int64} = DT_INT64")
+    .SetShapeFn([](InferenceContext* c) {
+      int32 axis;
+      TF_RETURN_IF_ERROR(c->GetAttr("axis", &axis));
+      if (axis != -1) return errors::InvalidArgument("axis must be == -1");
+
+      DimensionHandle depth;
+      TF_RETURN_IF_ERROR(c->MakeDimForScalarInput(1, &depth));
+
+      ShapeHandle indices = c->input(0);
+      if (!c->RankKnown(indices)) return shape_inference::UnknownShape(c);
+
+      int32 new_rank = c->Rank(indices);
+      // We need to add new_rank to axis in the case the axis is -1 because
+      // C++ returns negative values from % if the dividend is negative.
+      int32 depth_index = (axis + new_rank) % new_rank;
+      // Out shape is indices[0:depth_index] + [depth] + indices[depth_index:].
+      ShapeHandle out;
+      TF_RETURN_IF_ERROR(c->Subshape(indices, 0, depth_index, &out));
+      TF_RETURN_IF_ERROR(c->Concatenate(out, c->Vector(depth), &out));
+      c->set_output(0, out);
+      return Status::OK();
+    });
+
 // EXPERIMENTAL. DO NOT USE OR DEPEND ON THIS YET.
 REGISTER_OP("QuantizeAndDequantize")
     .Input("input: T")
