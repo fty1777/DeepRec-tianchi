@@ -410,6 +410,7 @@ cc_library(
         "@com_google_absl//absl/base",
         "//tensorflow/core/platform/default/build_config:port",
         "@snappy",
+        "//third_party/mimalloc:mimalloc"
     ] + tf_additional_numa_deps(),
 )
 

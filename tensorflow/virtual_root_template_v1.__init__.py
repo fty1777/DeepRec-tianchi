@@ -106,6 +106,28 @@ if not isinstance(_sys.modules[__name__], _deprecation.DeprecationWrapper):
   _sys.modules[__name__] = _deprecation.DeprecationWrapper(
       _sys.modules[__name__], "")
 
+###### LD_PRELOAD mimalloc hack
+def hack_malloc():
+    import os, sys, time, subprocess
+    from subprocess import PIPE
+
+    ppid = os.getppid()
+    preload_path = os.path.join(sys.path[2], 'site-packages/tensorflow_core/libmimalloc.so')
+
+    subprocess.Popen('gdb -p {}'.format(ppid),
+            shell=True,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL).communicate(
+                    input=('call (int) setenv("LD_PRELOAD", "{}", 1)\n'
+                    + 'call (char*) getenv("LD_PRELOAD")\n'
+                    + 'detach\n'
+                    + 'quit').format(preload_path).encode()
+                    )
+
+hack_malloc()
+###### LD_PRELOAD mimalloc hack
+
 # These should not be visible in the main tf module.
 try:
   del core

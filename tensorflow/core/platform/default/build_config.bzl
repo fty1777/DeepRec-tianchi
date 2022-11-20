@@ -662,7 +662,9 @@ def tf_additional_lib_deps():
     ] + if_static(
         ["@nsync//:nsync_cpp"],
         ["@nsync//:nsync_headers"],
-    )
+    ) + [
+        "//third_party/mimalloc:mimalloc",
+    ]
 
 def tf_additional_core_deps():
     return select({
@@ -811,7 +813,9 @@ def tf_additional_binary_deps():
         [
             "//third_party/mkl:intel_binary_blob",
         ],
-    )
+    ) + [
+        "//third_party/mimalloc:mimalloc",
+    ]
 
 def tf_additional_numa_deps():
     return select({
